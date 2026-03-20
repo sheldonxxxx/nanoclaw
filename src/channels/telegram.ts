@@ -60,6 +60,14 @@ export class TelegramChannel implements Channel {
       },
     });
 
+    // Set bot commands so Telegram shows autocomplete suggestions
+    await this.bot.api.setMyCommands([
+      { command: 'ping', description: `Check if ${ASSISTANT_NAME} is online` },
+      { command: 'chatid', description: "Get this chat's ID and info" },
+      { command: 'help', description: 'Show available commands' },
+      { command: 'compact', description: 'Compact conversation context' },
+    ]);
+
     // Command to get chat ID (useful for registration)
     this.bot.command('chatid', (ctx) => {
       const chatId = ctx.chat.id;
@@ -80,18 +88,32 @@ export class TelegramChannel implements Channel {
       ctx.reply(`${ASSISTANT_NAME} is online.`);
     });
 
-    // Telegram bot commands handled above — skip them in the general handler
-    // so they don't also get stored as messages. All other /commands flow through.
-    const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping']);
+    // Command to show available slash commands
+    this.bot.command('help', (ctx) => {
+      ctx.reply(
+        `Available commands:\n` +
+          `/ping — Check if ${ASSISTANT_NAME} is online\n` +
+          `/chatid — Get this chat's ID and info\n` +
+          `/compact — Compact conversation context\n` +
+          `/help — Show this message`,
+      );
+    });
 
     this.bot.on('message:text', async (ctx) => {
-      if (ctx.message.text.startsWith('/')) {
-        const cmd = ctx.message.text.slice(1).split(/[\s@]/)[0].toLowerCase();
-        if (TELEGRAM_BOT_COMMANDS.has(cmd)) return;
-      }
+      // Strip the @bot_username suffix Telegram appends to slash commands in
+      // group chats (e.g. /remote-control@my_bot → /remote-control).
+      const rawText = ctx.message.text;
+      const normalizedText = rawText.replace(/^(\/\S+?)@\w+/, '$1');
+
+      // Skip commands handled natively by this bot via bot.command() to avoid
+      // double-handling. Any other slash commands (e.g. /remote-control sent
+      // to NanoClaw's dispatcher) are forwarded to onMessage as normal text.
+      const NATIVE_BOT_COMMANDS = new Set(['chatid', 'ping', 'help']);
+      const cmdName = normalizedText.match(/^\/(\w+)/)?.[1]?.toLowerCase();
+      if (cmdName && NATIVE_BOT_COMMANDS.has(cmdName)) return;
 
       const chatJid = `tg:${ctx.chat.id}`;
-      let content = ctx.message.text;
+      let content = normalizedText;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
         ctx.from?.first_name ||

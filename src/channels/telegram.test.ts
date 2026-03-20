@@ -40,6 +40,7 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      setMyCommands: vi.fn().mockResolvedValue(undefined),
     };
 
     constructor(token: string) {
@@ -295,25 +296,41 @@ describe('TelegramChannel', () => {
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
 
-    it('skips bot commands (/chatid, /ping) but passes other / messages through', async () => {
+    it('skips native bot commands (/chatid, /ping)', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      // Bot commands should be skipped
-      const ctx1 = createTextCtx({ text: '/chatid' });
-      await triggerTextMessage(ctx1);
-      expect(opts.onMessage).not.toHaveBeenCalled();
-      expect(opts.onChatMetadata).not.toHaveBeenCalled();
+      for (const cmd of [
+        '/chatid',
+        '/ping',
+        '/chatid@my_bot',
+        '/ping@my_bot',
+      ]) {
+        vi.clearAllMocks();
+        await triggerTextMessage(createTextCtx({ text: cmd }));
+        expect(opts.onMessage).not.toHaveBeenCalled();
+      }
+    });
 
-      const ctx2 = createTextCtx({ text: '/ping' });
-      await triggerTextMessage(ctx2);
-      expect(opts.onMessage).not.toHaveBeenCalled();
+    it('forwards non-native slash commands to onMessage (e.g. /remote-control)', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
 
-      // Non-bot /commands should flow through
-      const ctx3 = createTextCtx({ text: '/remote-control' });
-      await triggerTextMessage(ctx3);
-      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      // Plain command
+      await triggerTextMessage(createTextCtx({ text: '/remote-control' }));
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '/remote-control' }),
+      );
+
+      vi.clearAllMocks();
+
+      // With @bot_username suffix (Telegram appends this in group chats)
+      await triggerTextMessage(
+        createTextCtx({ text: '/remote-control@my_bot' }),
+      );
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
         expect.objectContaining({ content: '/remote-control' }),
